@@ -9,7 +9,7 @@ from langchain_core.embeddings import Embeddings
 
 from src.data_processing.cleaner import COLUMNS, load_clean_rows
 from src.rag.retriever import build_where, format_document, get_car, search
-from src.rag.vector_store import build_documents, get_vector_store
+from src.rag.vector_store import build_documents, count, get_vector_store
 
 DIM = 64
 
@@ -33,9 +33,12 @@ class FakeEmbeddings(Embeddings):
 
 @pytest.fixture(scope="module")
 def store():
-    vector_store = get_vector_store(embedding_function=FakeEmbeddings(), persist=False)
-    vector_store.add_documents(build_documents())
-    return vector_store
+    # 不做任何预构建：向量库为空时应自行构建（创空间冷启动就靠这条路径）
+    return get_vector_store(embedding_function=FakeEmbeddings(), persist=False)
+
+
+def test_vector_store_autobuilds_when_empty(store):
+    assert count(store) == len(load_clean_rows()) >= 50
 
 
 def test_dataset_meets_quality_requirements():

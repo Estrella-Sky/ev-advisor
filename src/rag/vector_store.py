@@ -86,13 +86,25 @@ def collection_name() -> str:
     return config.get_config()["rag"]["collection"]
 
 
-def get_vector_store(embedding_function=None, persist: bool = True) -> Chroma:
-    """打开（或创建）向量库。"""
-    return Chroma(
+def get_vector_store(
+    embedding_function=None,
+    persist: bool = True,
+    autobuild: bool = True,
+) -> Chroma:
+    """打开（或创建）向量库；集合为空时自动构建，避免首次查询答不出参数。
+
+    autobuild=False 供 build_index 内部调用，避免自引用递归。
+    """
+    store = Chroma(
         collection_name=collection_name(),
         embedding_function=embedding_function or get_embeddings(),
         persist_directory=_persist_dir() if persist else None,
     )
+    if autobuild and count(store) == 0:
+        documents = build_documents()
+        store.add_documents(documents)
+        logger.info("向量库为空，已自动写入 %d 款车型", len(documents))
+    return store
 
 
 def count(store: Chroma | None = None) -> int:
@@ -102,10 +114,10 @@ def count(store: Chroma | None = None) -> int:
 
 def build_index(force: bool = False, embedding_function=None, persist: bool = True) -> Chroma:
     """构建向量库；已存在且非 force 时直接复用。"""
-    store = get_vector_store(embedding_function, persist)
+    store = get_vector_store(embedding_function, persist, autobuild=False)
     if force and count(store):
         store.delete_collection()
-        store = get_vector_store(embedding_function, persist)
+        store = get_vector_store(embedding_function, persist, autobuild=False)
     if count(store):
         logger.info("向量库已有 %d 款车型，跳过构建（--force 可重建）", count(store))
         return store
