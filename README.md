@@ -100,7 +100,7 @@ docker compose up --build     # 同样访问 http://127.0.0.1:7860
 
 ### 6. 在线演示（魔搭创空间）
 
-在线地址：<https://www.modelscope.cn/studios/EstrellaSky/ev-advisor>
+在线地址：<https://estrellasky-ev-advisor.ms.show>（项目页：<https://www.modelscope.cn/studios/EstrellaSky/ev-advisor>）
 
 > 为什么不用 Hugging Face Spaces？HF 现行政策下免费账号只能创建 Static Space，
 > 运行 Gradio / Docker Space 需要 PRO 订阅；魔搭创空间提供免费 CPU 档
@@ -118,6 +118,13 @@ docker compose up --build     # 同样访问 http://127.0.0.1:7860
    ```
 
 4. 平台自动构建，几分钟后即可通过 `https://www.modelscope.cn/studios/<用户名>/<空间名>` 访问
+
+日常更新用一键脚本（创空间与 GitHub 不联动，改完代码要同步一次）：
+
+```bash
+python scripts/sync_studio.py            # 同步代码
+python scripts/sync_studio.py --deploy   # 同步并重新部署
+```
 
 ## 自测与验收
 
