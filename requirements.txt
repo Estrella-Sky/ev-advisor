@@ -1,14 +1,15 @@
 # 运行时依赖（Python 3.10-3.11）
 #
-# LangChain 这一组锁到本地实测通过的版本：只写范围时，pip 会在
-# langchain / langsmith / openai 之间反复回退试探版本，线上构建实测
-# 从 3 分钟拖到 10 分钟以上（魔搭创空间构建日志 385 秒仍卡在同一步）。
+# 这一组必须锁死，且要按「魔搭创空间的阿里云 PyPI 镜像里有的版本」来锁：
+#   1. 不锁时 pip 会在 langchain / langchain-core / langsmith 之间反复回退试探，
+#      实测构建卡在 pip 步骤 385 秒以上并最终失败；
+#   2. 镜像比 PyPI 滞后几天，langchain 1.4.x 要求 langchain-core==1.6.4，
+#      而镜像上最新只到 1.6.3，所以这里锁定 1.3.18 + 1.6.3 这组可解析组合。
+# 版本组合已用 `pip install --dry-run --index-url mirrors.aliyun.com/pypi/simple` 验证。
 langchain==1.3.18
-langchain-core==1.6.4
-langchain-openai==1.6.3
+langchain-core==1.6.3
+langchain-openai==1.6.2
 langchain-chroma==1.1.0
-langsmith==0.11.2
-openai==3.6.0
 chromadb==1.5.9
 
 # gradio 保留范围：魔搭创空间基础镜像自带 5.12.0，本地/Docker 装 5.50.0，
