@@ -1,0 +1,20 @@
+# 敏感信息
+.env
+*.key
+
+# 向量库持久化（可由 scripts/ingest.py 重建）
+data/processed/embeddings/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# 运行产物
+logs/
+*.log
+.DS_Store
+

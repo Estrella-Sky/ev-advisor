@@ -1,0 +1,16 @@
+name: ev-advisor
+
+services:
+  ev-advisor:
+    build: .
+    image: ev-advisor:local
+    env_file:
+      # 没有 .env 也能启动（界面会提示去配置 API Key），有则自动注入
+      - path: .env
+        required: false
+    ports:
+      - "7860:7860"
+    volumes:
+      # 向量库持久化：容器重建后不必重新 embedding
+      - ./data/processed:/app/data/processed
+    restart: unless-stopped

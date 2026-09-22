@@ -1,0 +1,51 @@
+# 全局配置：API Key 等敏感信息一律通过环境变量注入，不写入本文件
+llm:
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: qwen-plus
+  temperature: 0.2
+  timeout: 60
+  api_key_env: DASHSCOPE_API_KEY
+
+embedding:
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: text-embedding-v3
+  batch_size: 10          # DashScope 单次 embedding 条数上限较保守，取 10 稳妥
+  api_key_env: DASHSCOPE_API_KEY
+
+rag:
+  persist_dir: data/processed/embeddings
+  collection: ev_cars
+  top_k: 5
+  chunk_size: 500
+  chunk_overlap: 50
+
+search:
+  timeout: 3              # 秒；超时降级为本地知识库回答
+  max_results: 3
+  snippet_max_chars: 100
+
+agent:
+  max_iterations: 8
+  memory_window: 8        # 注入 prompt 的最近对话轮数
+
+calculator:
+  compulsory_insurance: 950        # 交强险（6 座以下家用车）
+  commercial_insurance_rate: 0.02  # 商业险按裸车价估算
+  commercial_insurance_min: 3000   # 商业险下限
+  plate_fee: 500                   # 上牌/服务费
+  loan:
+    down_payment_ratio: 0.3        # 首付比例
+    months: 36                     # 贷款期数
+    annual_rate: 0.045             # 年化利率
+
+data:
+  raw_csv: data/raw/ev_cars.csv
+
+ui:
+  title: 新能源汽车智能导购与竞品分析 Agent
+  server_name: 0.0.0.0
+  server_port: 7860
+
+logging:
+  level: INFO
+
