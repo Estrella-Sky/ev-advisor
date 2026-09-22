@@ -18,3 +18,5 @@ logs/
 *.log
 .DS_Store
 
+# 魔搭上传工具留下的缓存
+.ms_upload_cache
