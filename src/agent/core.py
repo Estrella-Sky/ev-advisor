@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Literal
 
 from langchain.agents import create_agent
@@ -58,6 +59,30 @@ INTENT_KEYWORDS = (
     ("recommend", ("推荐", "买什么", "选哪", "适合", "预算", "帮我选", "家用")),
 )
 NEED_WORDS = ("续航", "空间", "智驾", "智能驾驶", "安全", "动力", "充电", "保值", "便宜")
+
+# 展示用的中文标签与执行路径（对应 §3.1 的 Router -> Planner -> Executor）
+INTENT_LABELS = {
+    "recommend": "按预算推荐",
+    "query_params": "参数查询",
+    "compare": "竞品对比",
+    "market_info": "市场信息",
+    "calculate": "落地价计算",
+    "chat": "闲聊",
+}
+PLAN_LABELS = {
+    "recommend": "RAG 按预算筛选候选 → LLM 排序并给出理由",
+    "query_params": "RAG 精确查询车型参数",
+    "compare": "RAG 逐款取参数（必要时联网补充）→ Markdown 对比表",
+    "market_info": "联网检索实时信息 → 摘要（失败降级本地知识库）",
+    "calculate": "调用计算器工具 → 税费/保险/月供明细",
+    "chat": "不调用工具，直接回答",
+}
+
+
+def clip(text: str, limit: int = 220) -> str:
+    """压平空白并截断，用于展示工具返回。"""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
 def rules_intent(text: str) -> Intent:
@@ -133,36 +158,72 @@ class EVAdvisor:
             return rules_intent(text)
 
     def chat(self, message: str) -> str:
-        """处理一轮用户输入，返回 Markdown 回答。"""
+        """处理一轮用户输入，只返回 Markdown 回答。"""
+        return self.chat_with_trace(message)[0]
+
+    def chat_with_trace(self, message: str) -> tuple[str, str]:
+        """处理一轮用户输入，返回（回答, Agent 决策路径 Markdown）。
+
+        决策路径用于界面展示：指代消解 → 意图识别 → 实体抽取 → 执行路径 →
+        工具调用 → 工具返回 → 耗时，让 ReAct 循环对用户可见。
+        """
+        steps: list[str] = []
+        started = time.monotonic()
         try:
             resolved = self.memory.resolve(message)  # 指代消解：第二个 -> 具体车型
+            if resolved != message:
+                steps.append(f"🔗 **指代消解**　`{message}` → `{resolved}`")
             self.memory.add_user(resolved)
             intent = self.classify(resolved)
             # 价格计算的关键词不会误伤（落地/月供/贷款…），LLM 漏判时用规则纠正
             if rules_intent(resolved).intent == "calculate" and intent.intent != "calculate":
                 logger.info("路由修正：%s -> calculate", intent.intent)
                 intent = intent.model_copy(update={"intent": "calculate"})
+                steps.append("🧭 **路由修正**　命中价格关键词，意图纠正为 `calculate`")
             logger.info("Intent: %s | 实体: %s", intent.intent, intent.model_dump())
+            steps.append(f"🎯 **意图识别**　`{intent.intent}`（{INTENT_LABELS[intent.intent]}）")
+            entities = self._entity_text(intent)
+            if entities:
+                steps.append(f"🧩 **实体抽取**　{entities}")
+            steps.append(f"🗺 **执行路径**　{PLAN_LABELS[intent.intent]}")
 
             system_prompt = SYSTEM_PROMPT.format(
                 context=render_context(self.memory.profile_text(), self.memory.history_text())
             )
             user_prompt = f"{resolved}\n\n[执行路径] {ROUTE_HINTS[intent.intent]}"
-            answer = self._execute(system_prompt, user_prompt)
+            answer = self._execute(system_prompt, user_prompt, steps)
 
             self.memory.add_ai(answer)  # 读取 [推荐顺序] 标记，决定「第二个」指向谁
             answer = strip_recommendation_marker(answer)
             self.memory.add_turn(message, answer)
-            return answer
+            steps.append(f"⏱ **总耗时**　{time.monotonic() - started:.1f} 秒")
+            return answer, "\n".join(f"- {step}" for step in steps)
         except RuntimeError as exc:  # 配置类问题：API Key 缺失等
             logger.error("配置错误：%s", exc)
-            return f"⚠️ 暂时无法回答：{exc}"
+            steps.append(f"⚠️ **中断**　{exc}")
+            return f"⚠️ 暂时无法回答：{exc}", "\n".join(f"- {step}" for step in steps)
         except Exception as exc:
             logger.exception("处理用户输入失败")
-            return f"⚠️ 处理失败：{exc}。可以换个说法再问一次。"
+            steps.append(f"⚠️ **中断**　{exc}")
+            return (
+                f"⚠️ 处理失败：{exc}。可以换个说法再问一次。",
+                "\n".join(f"- {step}" for step in steps),
+            )
 
-    def _execute(self, system_prompt: str, user_prompt: str) -> str:
-        """ReAct 执行：Thought → Action → Observation 循环。"""
+    @staticmethod
+    def _entity_text(intent: Intent) -> str:
+        """把抽取到的实体拼成一行展示文本。"""
+        parts = []
+        if intent.budget is not None:
+            parts.append(f"预算 {intent.budget:g} 万")
+        if intent.models:
+            parts.append("车型 " + "、".join(intent.models))
+        if intent.needs:
+            parts.append("关注点 " + "、".join(intent.needs))
+        return " ｜ ".join(parts)
+
+    def _execute(self, system_prompt: str, user_prompt: str, steps: list[str]) -> str:
+        """ReAct 执行：Thought → Action → Observation 循环，同时记录决策轨迹。"""
         agent = create_agent(
             model=self.llm,
             tools=self.tools,
@@ -175,14 +236,22 @@ class EVAdvisor:
             config={"recursion_limit": limit},
         )
         messages = result["messages"]
-        self._log_trace(messages)
+        self._collect_trace(messages, steps)
         return message_text(messages[-1].content)
 
     @staticmethod
-    def _log_trace(messages) -> None:
-        """记录 Agent 决策路径，便于排查与演示。"""
+    def _collect_trace(messages, steps: list[str]) -> None:
+        """记录 Agent 决策路径：写日志 + 追加到界面展示的轨迹。"""
+        tool_index = 0
         for message in messages:
             for call in getattr(message, "tool_calls", None) or []:
+                tool_index += 1
                 logger.info("Action: %s(%s)", call.get("name"), call.get("args"))
+                steps.append(
+                    f"🛠 **工具调用 ×{tool_index}**　`{call.get('name')}`"
+                    f"　参数 `{call.get('args')}`"
+                )
             if isinstance(message, ToolMessage):
-                logger.info("Observation: %s", message_text(message.content)[:200])
+                observation = message_text(message.content)
+                logger.info("Observation: %s", observation[:200])
+                steps.append(f"👀 **工具返回**　{clip(observation)}")

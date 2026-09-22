@@ -193,3 +193,35 @@ def test_price_question_is_routed_to_calculator(monkeypatch):
 
     assert called == [20]
     assert "21.43" in answer
+
+
+def test_trace_exposes_intent_and_tool_calls(monkeypatch):
+    """界面上展示的决策路径要能看到意图、工具调用和工具返回。"""
+
+    def fake_specs(model_name: str) -> str:
+        """按车型名查询参数。"""
+        return "比亚迪 海豹 | 续航 550 km"
+
+    tool = StructuredTool.from_function(fake_specs, name="get_car_specs", description="按车型名查询参数")
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_car_specs", "args": {"model_name": "比亚迪海豹"}, "id": "t1"}],
+            ),
+            AIMessage(content="比亚迪海豹续航 550 km。"),
+        ]
+    )
+    advisor = EVAdvisor(llm=model, tools=[tool])
+    monkeypatch.setattr(
+        EVAdvisor, "classify", lambda self, text: Intent(intent="query_params", models=["比亚迪海豹"])
+    )
+
+    answer, trace = advisor.chat_with_trace("比亚迪海豹续航多少？")
+
+    assert "`query_params`" in trace         # 意图识别
+    assert "车型 比亚迪海豹" in trace          # 实体抽取
+    assert "get_car_specs" in trace          # 工具调用
+    assert "550" in trace                    # 工具返回
+    assert "总耗时" in trace
+    assert "550" in answer

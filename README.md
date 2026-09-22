@@ -38,6 +38,7 @@ license: MIT
 | 竞品对比 | 输出 Markdown 对比表 + 购买建议，覆盖价格/续航/动力/空间/智驾/安全/用车成本 | ReAct 串联 `get_car_specs`、`web_search`、`calc_landing_price` |
 | 多轮记忆 | 记住预算、家庭情况、偏好品牌、已讨论车型，支持「第二个」「它」这类指代 | `ConversationMemory` + 车型名最长匹配 |
 | 落地价计算 | 购置税（含 2026-2027 新能源减半政策）、保险、上牌费、等额本息月供 | 纯 Python 计算工具，配置可调 |
+| Agent 过程可视化 | 界面右栏实时展开本轮决策路径：指代消解 → 意图识别 → 实体抽取 → 执行路径 → 工具调用（含参数）→ 工具返回 → 耗时，并同步显示会话记忆 | `EVAdvisor.chat_with_trace()` 返回「回答 + 轨迹」，Gradio 双栏布局渲染 |
 
 ## 架构
 
@@ -89,6 +90,10 @@ python -m src.rag.vector_store --force    # 数据更新后重建
 ```bash
 python app.py            # 打开 http://127.0.0.1:7860
 ```
+
+界面是左右双栏：左边是对话，右边实时展示 Agent 的决策路径与会话记忆——
+Router 识别出什么意图、抽到了哪些实体、Planner 选了哪条执行路径、
+Executor 调了哪个工具、工具返回了什么，都在右栏可见，不用去翻服务端日志。
 
 ### 5. Docker 一键部署
 
