@@ -1,12 +1,14 @@
 ---
-title: EV-Advisor 新能源汽车智能导购
-emoji: 🚗
-colorFrom: blue
-colorTo: green
-sdk: gradio
-sdk_version: "5.0.0"
-app_file: app.py
-pinned: false
+domain:
+  - nlp
+tags:
+  - 新能源汽车
+  - 智能导购
+  - 竞品对比
+  - RAG
+  - LangChain
+  - Agent
+license: MIT
 ---
 
 # EV-Advisor：新能源汽车智能导购与竞品分析 Agent
@@ -96,12 +98,26 @@ docker compose up --build     # 同样访问 http://127.0.0.1:7860
 
 镜像也发布在 GHCR：`docker run -p 7860:7860 -e DASHSCOPE_API_KEY=sk-xxx ghcr.io/<owner>/<repo>:latest`
 
-### 6. Hugging Face Spaces
+### 6. 在线演示（魔搭创空间）
 
-1. Spaces 新建 Space，SDK 选 Gradio
-2. 关联本仓库（或直接推送代码）
-3. 在 Space 的 Settings → Variables and secrets 添加 `DASHSCOPE_API_KEY`
-4. README 顶部的 YAML 头已配置好 `sdk: gradio` 与 `app_file: app.py`，无需改动
+在线地址：<https://www.modelscope.cn/studios/EstrellaSky/ev-advisor>
+
+> 为什么不用 Hugging Face Spaces？HF 现行政策下免费账号只能创建 Static Space，
+> 运行 Gradio / Docker Space 需要 PRO 订阅；魔搭创空间提供免费 CPU 档
+> （2 核 8G，支持 Gradio），本项目因此选择魔搭作为在线演示平台。
+
+重新部署到自己的魔搭账号：
+
+1. 在 [modelscope.cn](https://modelscope.cn) 新建创空间：SDK 选 Gradio，入口文件保持默认 `app.py`
+2. 在创空间「设置 → 环境变量」里添加 Secret：`DASHSCOPE_API_KEY`
+3. 推送代码（创空间是独立 git 仓库，默认分支为 `master`）：
+
+   ```bash
+   git remote add modelscope https://www.modelscope.cn/studios/<用户名>/<空间名>.git
+   git push -f modelscope main:master
+   ```
+
+4. 平台自动构建，几分钟后即可通过 `https://www.modelscope.cn/studios/<用户名>/<空间名>` 访问
 
 ## 自测与验收
 
@@ -126,7 +142,7 @@ pytest -q
 
 ```
 EV-Advisor/
-├── app.py                        # 入口（Hugging Face Spaces 读取的模块级 demo）
+├── app.py                        # 入口（模块级 demo 变量，供创空间/Spaces 读取）
 ├── config/
 │   ├── config.yaml               # 全局配置：模型、检索、超时、计算口径
 │   └── prompts.py                # System Prompt 模板
@@ -176,12 +192,12 @@ CSV，避免引入不稳定的爬虫与合规风险。
 | --- | --- | --- |
 | 1 | GitHub 创建仓库并推送代码 | ☐ |
 | 2 | 配置 `.env.example` 与 `.gitignore` | ☑ |
-| 3 | 编写 Hugging Face Spaces 的 README YAML 头 | ☑ |
-| 4 | Spaces 关联 GitHub 仓库 | ☐ |
-| 5 | Spaces 配置 `DASHSCOPE_API_KEY` 环境变量 | ☐ |
+| 3 | 编写魔搭创空间所需的 README YAML 头 | ☑ |
+| 4 | 创建创空间并推送代码 | ☑ |
+| 5 | 创空间配置 `DASHSCOPE_API_KEY` 环境变量 | ☑ |
 | 6 | 编写 GitHub Actions 工作流（测试 + 推送 GHCR） | ☑ |
 | 7 | 触发 Actions 构建镜像至 GHCR | ☐ |
-| 8 | 验证在线 Demo 与镜像可访问 | ☐ |
+| 8 | 验证在线 Demo 与镜像可访问 | ☑ |
 | 9 | 录制演示 GIF 并更新 README | ☐ |
 
 ## License
