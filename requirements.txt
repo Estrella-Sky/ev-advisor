@@ -12,9 +12,11 @@ langchain-openai==1.6.2
 langchain-chroma==1.1.0
 chromadb==1.5.9
 
-# gradio 保留范围：魔搭创空间基础镜像自带 5.12.0，本地/Docker 装 5.50.0，
-# 两种版本本项目都兼容，锁死反而会强制镜像升级、拖慢构建。
-gradio>=5.0,<6.0
+# gradio 必须锁 5.50.0：魔搭创空间基础镜像自带的 5.12.0 在生成 Blocks 应用的
+# /api_info 时会抛 `TypeError: argument of type 'bool' is not iterable`
+# （gradio_client 的 JSON Schema 转换 bug），表现为「Use via API」和程序化调用直接 500。
+# 5.50.0 已在本地与线上实测通过。
+gradio==5.50.0
 ddgs>=9.0
 pyyaml>=6.0
 
