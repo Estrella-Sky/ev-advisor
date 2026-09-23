@@ -6,6 +6,7 @@
 #   2. 镜像比 PyPI 滞后几天，langchain 1.4.x 要求 langchain-core==1.6.4，
 #      而镜像上最新只到 1.6.3，所以这里锁定 1.3.18 + 1.6.3 这组可解析组合。
 # 版本组合已用 `pip install --dry-run --index-url mirrors.aliyun.com/pypi/simple` 验证。
+# 注意：改动本文件会触发创空间重新构建镜像（约 3-7 分钟）。
 langchain==1.3.18
 langchain-core==1.6.3
 langchain-openai==1.6.2
