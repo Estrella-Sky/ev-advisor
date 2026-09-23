@@ -7,16 +7,22 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Iterator
 from typing import Literal
 
 from langchain.agents import create_agent
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 import config
 from config.prompts import SYSTEM_PROMPT, render_context
-from src.agent.memory import ConversationMemory, match_model_names, strip_recommendation_marker
+from src.agent.memory import (
+    ConversationMemory,
+    match_model_names,
+    strip_recommendation_marker,
+    strip_streaming_marker,
+)
 from src.data_processing.cleaner import car_names
 from src.tools import ALL_TOOLS
 
@@ -158,17 +164,31 @@ class EVAdvisor:
             return rules_intent(text)
 
     def chat(self, message: str) -> str:
-        """处理一轮用户输入，只返回 Markdown 回答。"""
+        """处理一轮用户输入，只返回 Markdown 回答（非流式便捷入口）。"""
         return self.chat_with_trace(message)[0]
 
     def chat_with_trace(self, message: str) -> tuple[str, str]:
-        """处理一轮用户输入，返回（回答, Agent 决策路径 Markdown）。
+        """非流式入口：跑完整轮，返回（最终回答, 决策轨迹）。"""
+        answer, trace = "", ""
+        for answer, trace in self.stream_chat(message):
+            pass
+        return answer, trace
 
-        决策路径用于界面展示：指代消解 → 意图识别 → 实体抽取 → 执行路径 →
-        工具调用 → 工具返回 → 耗时，让 ReAct 循环对用户可见。
+    def stream_chat(self, message: str) -> Iterator[tuple[str, str]]:
+        """流式处理一轮输入，持续 yield（当前回答, 决策轨迹 Markdown）。
+
+        界面据此边生成边显示：先推送意图与执行路径，再推送工具调用与观察结果，
+        最后逐字推送答案。指代消解 → 意图识别 → 实体抽取 → 执行路径 →
+        工具调用 → 工具返回 → 耗时，每一步都可见。
         """
         steps: list[str] = []
         started = time.monotonic()
+        pending_note = "⏳ **生成中**　正在调用模型…"
+
+        def render() -> str:
+            return "\n".join(f"- {step}" for step in steps)
+
+        raw_answer = ""
         try:
             resolved = self.memory.resolve(message)  # 指代消解：第二个 -> 具体车型
             if resolved != message:
@@ -186,29 +206,35 @@ class EVAdvisor:
             if entities:
                 steps.append(f"🧩 **实体抽取**　{entities}")
             steps.append(f"🗺 **执行路径**　{PLAN_LABELS[intent.intent]}")
+            steps.append(pending_note)
+            yield "", render()  # 先把意图与路径推给界面，用户马上看得到
 
             system_prompt = SYSTEM_PROMPT.format(
                 context=render_context(self.memory.profile_text(), self.memory.history_text())
             )
             user_prompt = f"{resolved}\n\n[执行路径] {ROUTE_HINTS[intent.intent]}"
-            answer = self._execute(system_prompt, user_prompt, steps)
 
-            self.memory.add_ai(answer)  # 读取 [推荐顺序] 标记，决定「第二个」指向谁
-            answer = strip_recommendation_marker(answer)
+            for raw_answer in self._stream_execute(system_prompt, user_prompt, steps):
+                if pending_note in steps:
+                    steps.remove(pending_note)
+                yield strip_streaming_marker(raw_answer), render()
+
+            if not raw_answer:
+                raise RuntimeError("模型没有返回任何内容")
+
+            self.memory.add_ai(raw_answer)  # 读取 [推荐顺序] 标记，决定「第二个」指向谁
+            answer = strip_recommendation_marker(raw_answer)
             self.memory.add_turn(message, answer)
             steps.append(f"⏱ **总耗时**　{time.monotonic() - started:.1f} 秒")
-            return answer, "\n".join(f"- {step}" for step in steps)
+            yield answer, render()
         except RuntimeError as exc:  # 配置类问题：API Key 缺失等
             logger.error("配置错误：%s", exc)
             steps.append(f"⚠️ **中断**　{exc}")
-            return f"⚠️ 暂时无法回答：{exc}", "\n".join(f"- {step}" for step in steps)
+            yield f"⚠️ 暂时无法回答：{exc}", render()
         except Exception as exc:
             logger.exception("处理用户输入失败")
             steps.append(f"⚠️ **中断**　{exc}")
-            return (
-                f"⚠️ 处理失败：{exc}。可以换个说法再问一次。",
-                "\n".join(f"- {step}" for step in steps),
-            )
+            yield f"⚠️ 处理失败：{exc}。可以换个说法再问一次。", render()
 
     @staticmethod
     def _entity_text(intent: Intent) -> str:
@@ -222,8 +248,11 @@ class EVAdvisor:
             parts.append("关注点 " + "、".join(intent.needs))
         return " ｜ ".join(parts)
 
-    def _execute(self, system_prompt: str, user_prompt: str, steps: list[str]) -> str:
-        """ReAct 执行：Thought → Action → Observation 循环，同时记录决策轨迹。"""
+    def _stream_execute(self, system_prompt: str, user_prompt: str, steps: list[str]) -> Iterator[str]:
+        """流式 ReAct 执行：逐块 yield 累积答案，工具调用与返回同步写入轨迹。
+
+        stream_mode 同时取 updates（工具调用/观察结果）与 messages（模型逐字输出）。
+        """
         agent = create_agent(
             model=self.llm,
             tools=self.tools,
@@ -231,27 +260,38 @@ class EVAdvisor:
             name="ev_advisor",
         )
         limit = config.get_config()["agent"]["max_iterations"] * 2
-        result = agent.invoke(
+        answer = ""
+        tool_index = 0
+        for mode, payload in agent.stream(
             {"messages": [{"role": "user", "content": user_prompt}]},
             config={"recursion_limit": limit},
-        )
-        messages = result["messages"]
-        self._collect_trace(messages, steps)
-        return message_text(messages[-1].content)
+            stream_mode=["updates", "messages"],
+        ):
+            if mode == "messages":
+                chunk, _meta = payload
+                # messages 模式也会回显工具消息：只取模型自己吐的字。
+                # 流式模型给 AIMessageChunk，非流式（含测试里的假模型）给 AIMessage。
+                if not isinstance(chunk, (AIMessage, AIMessageChunk)):
+                    continue
+                text = message_text(getattr(chunk, "content", ""))
+                if not text:
+                    continue
+                answer += text
+                yield answer
+                continue
 
-    @staticmethod
-    def _collect_trace(messages, steps: list[str]) -> None:
-        """记录 Agent 决策路径：写日志 + 追加到界面展示的轨迹。"""
-        tool_index = 0
-        for message in messages:
-            for call in getattr(message, "tool_calls", None) or []:
-                tool_index += 1
-                logger.info("Action: %s(%s)", call.get("name"), call.get("args"))
-                steps.append(
-                    f"🛠 **工具调用 ×{tool_index}**　`{call.get('name')}`"
-                    f"　参数 `{call.get('args')}`"
-                )
-            if isinstance(message, ToolMessage):
-                observation = message_text(message.content)
-                logger.info("Observation: %s", observation[:200])
-                steps.append(f"👀 **工具返回**　{clip(observation)}")
+            for update in (payload or {}).values():
+                for message in (update or {}).get("messages", []) or []:
+                    for call in getattr(message, "tool_calls", None) or []:
+                        tool_index += 1
+                        logger.info("Action: %s(%s)", call.get("name"), call.get("args"))
+                        steps.append(
+                            f"🛠 **工具调用 ×{tool_index}**　`{call.get('name')}`"
+                            f"　参数 `{call.get('args')}`"
+                        )
+                        yield answer
+                    if isinstance(message, ToolMessage):
+                        observation = message_text(message.content)
+                        logger.info("Observation: %s", observation[:200])
+                        steps.append(f"👀 **工具返回**　{clip(observation)}")
+                        yield answer

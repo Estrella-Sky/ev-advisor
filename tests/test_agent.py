@@ -225,3 +225,48 @@ def test_trace_exposes_intent_and_tool_calls(monkeypatch):
     assert "550" in trace                    # 工具返回
     assert "总耗时" in trace
     assert "550" in answer
+
+
+def test_stream_chat_pushes_trace_before_answer(monkeypatch):
+    """流式输出：先到轨迹（意图/工具调用），答案逐帧增长，最后一帧是完整结果。"""
+
+    def fake_specs(model_name: str) -> str:
+        """按车型名查询参数。"""
+        return "比亚迪 海豹 | 续航 550 km"
+
+    tool = StructuredTool.from_function(fake_specs, name="get_car_specs", description="按车型名查询参数")
+    model = ScriptedToolCallingModel(
+        responses=[
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_car_specs", "args": {"model_name": "比亚迪海豹"}, "id": "s1"}],
+            ),
+            AIMessage(content="比亚迪海豹续航 550 km。"),
+        ]
+    )
+    advisor = EVAdvisor(llm=model, tools=[tool])
+    monkeypatch.setattr(EVAdvisor, "classify", lambda self, text: Intent(intent="query_params"))
+
+    chunks = list(advisor.stream_chat("比亚迪海豹续航多少？"))
+
+    assert len(chunks) >= 3, "至少要有：意图轨迹、工具调用、最终答案三帧"
+    assert chunks[0][0] == "", "第一帧只推轨迹，不应有答案"
+    assert "`query_params`" in chunks[0][1]
+    assert any("get_car_specs" in trace for _, trace in chunks)
+    assert any("工具返回" in trace for _, trace in chunks)
+
+    answers = [answer for answer, _ in chunks]
+    assert answers == sorted(answers, key=len), "答案应逐帧累积增长"
+    final_answer, final_trace = chunks[-1]
+    assert "550" in final_answer
+    assert "总耗时" in final_trace
+
+
+def test_streaming_hides_recommendation_marker():
+    from src.agent.memory import strip_streaming_marker
+
+    full = "推荐 比亚迪元PLUS。\n[推荐顺序] 比亚迪元PLUS｜吉利银河E5"
+    partial = "推荐 比亚迪元PLUS。\n[推荐顺"
+    assert strip_streaming_marker(full) == "推荐 比亚迪元PLUS。"
+    assert strip_streaming_marker(partial) == "推荐 比亚迪元PLUS。"
+    assert strip_streaming_marker("推荐 比亚迪元PLUS。") == "推荐 比亚迪元PLUS。"

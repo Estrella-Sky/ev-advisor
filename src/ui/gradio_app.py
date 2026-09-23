@@ -1,4 +1,4 @@
-"""Gradio 界面：左侧对话，右侧实时展示 Agent 决策路径与会话记忆。
+"""Gradio 界面：左侧对话（流式输出），右侧实时展示 Agent 决策路径与会话记忆。
 
 需求文档 §3.1 的 Router → Planner → Executor 流程对用户是黑盒，
 这里把意图识别、实体抽取、工具调用与返回结果直接铺在界面上。
@@ -45,16 +45,23 @@ def build_demo() -> gr.Blocks:
     cfg = config.get_config()["ui"]
 
     def respond(message: str, history: list):
+        """生成器：边生成边推给界面，实现回答的流式输出。"""
         if not message or not str(message).strip():
-            return history, PENDING_HINT, _profile_text(advisor), ""
+            yield history, PENDING_HINT, _profile_text(advisor), ""
+            return
         if not history:  # 新会话（首次提问或点了清空）
             advisor.reset()
-        answer, trace = advisor.chat_with_trace(message)
-        history = list(history) + [
+        base = list(history) + [
             {"role": "user", "content": message},
-            {"role": "assistant", "content": answer},
+            {"role": "assistant", "content": ""},
         ]
-        return history, trace, _profile_text(advisor), ""
+        for answer, trace in advisor.stream_chat(message):
+            yield (
+                base[:-1] + [{"role": "assistant", "content": answer}],
+                trace,
+                _profile_text(advisor),
+                "",
+            )
 
     def clear():
         advisor.reset()

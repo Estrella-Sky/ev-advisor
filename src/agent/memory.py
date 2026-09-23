@@ -52,6 +52,23 @@ def strip_recommendation_marker(text: str) -> str:
     return RECOMMEND_MARKER.sub("", text).strip()
 
 
+def strip_streaming_marker(text: str) -> str:
+    """流式输出时隐藏 [推荐顺序] 标记。
+
+    流式场景下标记可能只传到一半（例如刚收到「[推荐顺」），所以要同时处理
+    完整标记与它任意长度的前缀，避免用户看到半截内部标记。
+    """
+    marker = "[推荐顺序]"
+    index = text.find(marker)
+    if index >= 0:
+        return text[:index].rstrip()
+    stripped = text.rstrip()
+    for length in range(len(marker) - 1, 1, -1):
+        if stripped.endswith(marker[:length]):
+            return stripped[: -length].rstrip()
+    return text
+
+
 def match_model_names(text: str, names: list[str]) -> list[str]:
     """按出现顺序找出文本中的车型名，忽略被更长名称覆盖的短名（如「海豹」之于「比亚迪海豹」）。"""
     hits: list[tuple[int, int, str]] = []
