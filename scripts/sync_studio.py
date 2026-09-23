@@ -81,8 +81,14 @@ def main() -> int:
     print("已提交:", (result or {}).get("commit_id") if isinstance(result, dict) else result)
 
     if args.deploy:
-        api.deploy_repo(args.repo, "studio")
-        print("已触发重新部署，构建通常需要 3-5 分钟。")
+        # 带上 payload 强制重建：不带时平台可能直接复用上一次的镜像，
+        # 表现是「几十秒就构建成功、但线上还是旧代码」（实测踩过）。
+        api.deploy_repo(
+            args.repo,
+            "studio",
+            payload={"no_cache": True, "rebuild": True, "revision": "master"},
+        )
+        print("已触发重新部署，构建通常需要 3-8 分钟（改了依赖会更久）。")
     return 0
 
 
